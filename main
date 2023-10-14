@@ -1,0 +1,161 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <netinet/in.h>
+#include <netinet/ip_icmp.h>
+#include <netinet/udp.h>
+#include <netinet/tcp.h>
+#include <netinet/ip.h>
+#include <netinet/if_ether.h>
+#include <net/ethernet.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+
+// Function declarations
+void processPacket(unsigned char *buffer, int size);
+void printEthernetHeader(struct ethhdr *eth);
+void printIpHeader(struct iphdr *ipHeader);
+void printTcpPacket(struct iphdr *ipHeader, unsigned char *buffer);
+void printUdpPacket(struct iphdr *ipHeader, unsigned char *buffer);
+void printIcmpPacket(struct iphdr *ipHeader, unsigned char *buffer);
+void printData(unsigned char *data, int size);
+
+FILE *logfile;
+int tcp = 0, udp = 0, icmp = 0, others = 0, total = 0;
+
+int main() {
+    int sockRaw;
+    int data_size;
+    unsigned char *buffer = (unsigned char *)malloc(65536); // A large buffer
+
+    // Open the log file for writing
+    logfile = fopen("packet_capture.log", "w");
+    if (logfile == NULL) {
+        printf("Unable to create packet_capture.log file.\n");
+        return 1;
+    }
+
+    printf("Starting packet capture...\n");
+
+    // Create a raw socket for packet capture
+    sockRaw = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    if (sockRaw < 0) {
+        perror("Socket Error");
+        return 1;
+    }
+
+    while (1) {
+        // Receive packets
+        data_size = recv(sockRaw, buffer, 65536, 0);
+        if (data_size < 0) {
+            printf("recv error, failed to get packets\n");
+            return 1;
+        }
+        // Process and analyze the packet
+        processPacket(buffer, data_size);
+    }
+
+    close(sockRaw);
+    printf("Finished packet capture\n");
+    return 0;
+}
+
+// Process the received packet
+void processPacket(unsigned char *buffer, int size) {
+    struct ethhdr *eth = (struct ethhdr *)buffer;
+    struct iphdr *ipHeader = (struct iphdr *)(buffer + sizeof(struct ethhdr));
+    ++total;
+
+    // Print Ethernet header details
+    printEthernetHeader(eth);
+
+    // Analyze the protocol of the IP header
+    switch (ipHeader->protocol) {
+        case 1: // ICMP Protocol
+            ++icmp;
+            printIcmpPacket(ipHeader, buffer);
+            break;
+
+        case 6: // TCP Protocol
+            ++tcp;
+            printTcpPacket(ipHeader, buffer);
+            break;
+
+        case 17: // UDP Protocol
+            ++udp;
+            printUdpPacket(ipHeader, buffer);
+            break;
+
+        default: // Other protocols
+            ++others;
+            break;
+    }
+
+    // Print statistics
+    printf("TCP: %d   UDP: %d   ICMP: %d   Others: %d   Total: %d\r", tcp, udp, icmp, others, total);
+}
+
+// Print Ethernet header details
+void printEthernetHeader(struct ethhdr *eth) {
+    fprintf(logfile, "\nEthernet Header\n");
+    fprintf(logfile, "   |-Destination Address: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n",
+            eth->h_dest[0], eth->h_dest[1], eth->h_dest[2], eth->h_dest[3], eth->h_dest[4], eth->h_dest[5]);
+    fprintf(logfile, "   |-Source Address: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n",
+            eth->h_source[0], eth->h_source[1], eth->h_source[2], eth->h_source[3], eth->h_source[4], eth->h_source[5]);
+    fprintf(logfile, "   |-Protocol: %u\n", (unsigned short)eth->h_proto);
+}
+
+// Print IP header details
+void printIpHeader(struct iphdr *ipHeader) {
+    fprintf(logfile, "\nIP Header\n");
+    fprintf(logfile, "   |-IP Version: %d\n", (unsigned int)ipHeader->version);
+    fprintf(logfile, "   |-IP Header Length: %d DWORDS or %d Bytes\n", (unsigned int)ipHeader->ihl, ((unsigned int)(ipHeader->ihl)) * 4);
+    fprintf(logfile, "   |-Type Of Service: %d\n", (unsigned int)ipHeader->tos);
+    fprintf(logfile, "   |-IP Total Length: %d Bytes (Size of Packet)\n", ntohs(ipHeader->tot_len));
+    fprintf(logfile, "   |-Identification: %d\n", ntohs(ipHeader->id));
+    // You can add more IP header fields here if needed
+    // ...
+}
+
+// Print TCP packet details
+void printTcpPacket(struct iphdr *ipHeader, unsigned char *buffer) {
+    struct tcphdr *tcpHeader = (struct tcphdr *)(buffer + sizeof(struct ethhdr) + (ipHeader->ihl * 4));
+    fprintf(logfile, "\nTCP Packet\n");
+    fprintf(logfile, "   |-Source Port: %u\n", ntohs(tcpHeader->source));
+    fprintf(logfile, "   |-Destination Port: %u\n", ntohs(tcpHeader->dest));
+    // You can add more TCP header fields here if needed
+    // ...
+}
+
+// Print UDP packet details
+void printUdpPacket(struct iphdr *ipHeader, unsigned char *buffer) {
+    struct udphdr *udpHeader = (struct udphdr *)(buffer + sizeof(struct ethhdr) + (ipHeader->ihl * 4));
+    fprintf(logfile, "\nUDP Packet\n");
+    fprintf(logfile, "   |-Source Port: %u\n", ntohs(udpHeader->source));
+    fprintf(logfile, "   |-Destination Port: %u\n", ntohs(udpHeader->dest));
+    // You can add more UDP header fields here if needed
+    // ...
+}
+
+// Print ICMP packet details
+void printIcmpPacket(struct iphdr *ipHeader, unsigned char *buffer) {
+    struct icmphdr *icmpHeader = (struct icmphdr *)(buffer + sizeof(struct ethhdr) + (ipHeader->ihl * 4));
+    fprintf(logfile, "\nICMP Packet\n");
+    fprintf(logfile, "   |-Type: %d\n", (unsigned int)(icmpHeader->type));
+    fprintf(logfile, "   |-Code: %d\n", (unsigned int)(icmpHeader->code));
+    // You can add more ICMP header fields here if needed
+    // ...
+}
+
+// Print the data payload in a user-friendly way
+void printData(unsigned char *data, int size) {
+    fprintf(logfile, "\nData Payload\n");
+    for (int i = 0; i < size; i++) {
+        if (i != 0 && i % 16 == 0) {
+            fprintf(logfile, "\n");
+        }
+        fprintf(logfile, " %02X", (unsigned int)data[i]);
+    }
+    fprintf(logfile, "\n");
+}
